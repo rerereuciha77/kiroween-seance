@@ -1,5 +1,4 @@
 import { createConnection } from 'net'
-import { TLS_OPTIONS, createSecureContext } from 'tls'
 import { NNTPError } from '../errors'
 
 export type NNTPCommand =
@@ -83,7 +82,7 @@ export function parseGroup(data: string[]): { count: number; first: number; last
 }
 
 /**
- * Parse OVER/XOVER response
+ * Parse OVER response
  * Format: num <tab> subject <tab> from <tab> date <tab> id <tab> ref... [optional fields]
  */
 export function parseOver(data: string[]): Array<{
@@ -186,8 +185,8 @@ export async function nntpCommand(
       if (conn) {
         conn.destroy()
       }
-      const results = commands.map(cmd => ({
-        ok: false,
+      const results: NNTPResult[] = commands.map(cmd => ({
+        ok: false as const,
         cmd: cmd.cmd,
         error: new NNTPError(400, `NNTP request to ${host}:${port} timed out after ${timeoutMs}ms`)
       }))
@@ -229,14 +228,14 @@ export async function nntpCommand(
         resolve(results)
       })
       
-      conn.on('error', (err) => {
+      conn.on('error', (err: NodeJS.ErrnoException) => {
         if (timedOut) return
         clearTimeout(timer)
         
-        const errorResults = commands.map(cmd => ({
-          ok: false,
+        const errorResults: NNTPResult[] = commands.map(cmd => ({
+          ok: false as const,
           cmd: cmd.cmd,
-          error: new NNTPError(0, `Connection error: ${(err as Error).message}`)
+          error: new NNTPError(0, `Connection error: ${err.message}`)
         }))
         resolve(errorResults)
       })
@@ -263,7 +262,7 @@ export async function nntpCommand(
             // Command not recognized
             currentCommand = pendingCommands.shift() || { cmd: 'DATE' }
             results.push({
-              ok: false,
+              ok: false as const,
               cmd: currentCommand.cmd,
               error: new NNTPError(code, `Unknown command: ${message}`)
             })
@@ -273,7 +272,7 @@ export async function nntpCommand(
           
           if (!currentCommand) {
             // Response to CAPABILITIES or greeting
-            if (useTls && !conn.secure && message.includes('STARTTLS')) {
+            if (useTls && !conn!.secure && message.includes('STARTTLS')) {
               sendCommand('STARTTLS')
             }
             continue
@@ -281,11 +280,31 @@ export async function nntpCommand(
           
           if (!continuation) {
             // Single line response
-            results.push({
-              ok: code >= 200 && code < 400,
-              cmd: currentCommand.cmd,
-              data: message,
-            })
+            let parsedData: unknown = message
+            
+            switch (currentCommand.cmd) {
+              case 'LIST_ACTIVE':
+                parsedData = parseListActive([message])
+                break
+              case 'GROUP':
+                parsedData = parseGroup([message])
+                break
+              case 'OVER':
+                parsedData = parseOver([message])
+                break
+              case 'ARTICLE':
+                parsedData = parseArticle([message])
+                break
+              case 'DATE':
+                parsedData = parseDate([message])
+                break
+            }
+            
+            const isSuccess = code >= 200 && code < 400
+            const resultEntry: NNTPResult = isSuccess
+              ? { ok: true as const, cmd: currentCommand.cmd, data: parsedData }
+              : { ok: false as const, cmd: currentCommand.cmd, error: new NNTPError(code, `NNTP error: ${message}`) }
+            results.push(resultEntry)
             processNextCommand()
             return
           }
@@ -311,7 +330,6 @@ export async function nntpCommand(
               parsedData = parseGroup(responseLines)
               break
             case 'OVER':
-            case 'XOVER':
               parsedData = parseOver(responseLines)
               break
             case 'ARTICLE':
@@ -323,8 +341,8 @@ export async function nntpCommand(
           }
           
           results.push({
-            ok: true,
-            cmd: currentCommand?.cmd || 'UNKNOWN',
+            ok: true as const,
+            cmd: currentCommand?.cmd as NNTPCommand["cmd"],
             data: parsedData,
           })
           processNextCommand()

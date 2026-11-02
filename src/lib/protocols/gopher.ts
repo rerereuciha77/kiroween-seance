@@ -1,4 +1,4 @@
-import { createConnection, Connection } from 'net'
+import { createConnection } from 'net'
 import { GopherError } from '../errors'
 import { Protocol } from '@/types'
 
@@ -28,9 +28,6 @@ export function parseGopherMenu(data: string, host: string, port: number): Gophe
   
   for (const line of lines) {
     if (line.length === 0) continue
-    
-    // Remove the trailing \r\n indicator (0x0d 0x0a was stripped, but we may have \r\n in data)
-    // Gopher lines are typically tab-separated: type|label|selector|host|port
     
     // Try to parse as tab-delimited
     const parts = line.split('\t')
@@ -94,7 +91,7 @@ export async function gopherFetch(
       })
     }, timeoutMs)
     
-    let conn: Connection | null = null
+    let conn: any | null = null
     let buffer = Buffer.alloc(0)
     
     conn = createConnection({ host, port }, () => {
@@ -154,11 +151,11 @@ export async function gopherFetch(
       }
     })
     
-    conn.on('error', (err) => {
+    conn.on('error', (err: NodeJS.ErrnoException) => {
       if (timedOut) return
       clearTimeout(timer)
       
-      if ((err as NodeJS.ErrnoException).code === 'ECONNREFUSED') {
+      if (err.code === 'ECONNREFUSED') {
         resolve({
           ok: false,
           error: new GopherError('refused', `Connection refused to ${host}:${port}`)
@@ -166,7 +163,7 @@ export async function gopherFetch(
       } else {
         resolve({
           ok: false,
-          error: new GopherError('parse', `Connection error: ${(err as Error).message}`)
+          error: new GopherError('parse', `Connection error: ${err.message}`)
         })
       }
     })

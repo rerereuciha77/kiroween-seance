@@ -70,7 +70,7 @@ describe('parseGopherMenu', () => {
       kind: '0',
       label: 'Valid',
       selector: 'selector',
-      host: 'example.com',
+      host: 'host',
       port: 70,
     })
   })

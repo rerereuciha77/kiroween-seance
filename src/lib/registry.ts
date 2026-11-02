@@ -1,4 +1,5 @@
 import { readFileSync } from 'fs'
+import { Protocol, Source } from '@/types'
 
 /**
  * Reads sources.json from the repo root and validates its schema.

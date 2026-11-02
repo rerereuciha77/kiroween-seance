@@ -1,7 +1,8 @@
 import { loadRegistry } from '@/lib/registry'
+import { Source } from '@/types'
 
 export default function HomePage() {
-  const sources = loadRegistry()
+  const sources: Source[] = loadRegistry()
   
   return (
     <main className="p-8">

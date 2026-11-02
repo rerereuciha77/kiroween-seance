@@ -1,4 +1,4 @@
-import { gopherFetch, GopherResult, parseGopherMenu } from './protocols/gopher'
+import { gopherFetch, GopherResult } from './protocols/gopher'
 import { nntpCommand, NNTPCommand, NNTPResult } from './protocols/nntp'
 import { fingerFetch, FingerResult } from './protocols/finger'
 import { isAllowed, loadRegistry } from './registry'

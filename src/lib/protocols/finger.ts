@@ -80,11 +80,11 @@ export async function fingerFetch(
       resolve({ ok: true, body: data })
     })
     
-    conn.on('error', (err) => {
+    conn.on('error', (err: NodeJS.ErrnoException) => {
       if (timedOut) return
       clearTimeout(timer)
       
-      if ((err as NodeJS.ErrnoException).code === 'ECONNREFUSED') {
+      if (err.code === 'ECONNREFUSED') {
         resolve({
           ok: false,
           error: new FingerError('refused', `Connection refused to ${host}:${port}`)
@@ -92,7 +92,7 @@ export async function fingerFetch(
       } else {
         resolve({
           ok: false,
-          error: new FingerError('toobig', `Connection error: ${(err as Error).message}`)
+          error: new FingerError('toobig', `Connection error: ${err.message}`)
         })
       }
     })
