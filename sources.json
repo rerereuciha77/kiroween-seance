@@ -1,0 +1,23 @@
+[
+  {
+    "id": "gopher-floodgap",
+    "protocol": "gopher",
+    "host": "gopher.floodgap.com",
+    "port": 70,
+    "description": "Gopher server at floodgap.com"
+  },
+  {
+    "id": "nntp-europenews",
+    "protocol": "nntp",
+    "host": "news.europenews.net",
+    "port": 119,
+    "description": "European news NNTP server"
+  },
+  {
+    "id": "finger-local",
+    "protocol": "finger",
+    "host": "localhost",
+    "port": 79,
+    "description": "Local finger server for testing"
+  }
+]
