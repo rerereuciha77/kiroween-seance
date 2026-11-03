@@ -34,7 +34,7 @@ describe('parseGopherMenu', () => {
   })
   
   it('should parse simple menu correctly', () => {
-    const menu = '0\tFile1\tfile1.txt\texample.com\t70\r\n1\tDirectory\t/dir\texample.com\t70\r\n'
+    const menu = '0File1\tfile1.txt\texample.com\t70\r\n1Directory\t/dir\texample.com\t70\r\n'
     const result = parseGopherMenu(menu, 'example.com', 70)
     
     expect(result).toHaveLength(2)
@@ -55,7 +55,7 @@ describe('parseGopherMenu', () => {
   })
   
   it('should fallback to kind=i for malformed lines', () => {
-    const menu = 'just some text without tabs\r\n0\tValid\tselector\thost\t70\r\n'
+    const menu = 'just some text without tabs\r\n0Valid\tselector\thost\t70\r\n'
     const result = parseGopherMenu(menu, 'example.com', 70)
     
     expect(result).toHaveLength(2)

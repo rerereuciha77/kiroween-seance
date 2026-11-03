@@ -25,10 +25,10 @@ describe('nntp response parsers', () => {
     const result = parseGroup(data)
     
     expect(result).toEqual({
-      count: 211,
-      first: 150,
-      last: 1,
-      group: '150',
+      count: 150,
+      first: 1,
+      last: 150,
+      group: 'comp.os.linux.misc',
     })
   })
   

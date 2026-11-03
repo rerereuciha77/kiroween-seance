@@ -1,4 +1,5 @@
-import { createConnection } from 'net'
+import { createConnection, Socket } from 'net'
+import { connect as tlsConnect } from 'tls'
 import { NNTPError } from '../errors'
 
 export type NNTPCommand =
@@ -68,8 +69,12 @@ export function parseListActive(data: string[]): Array<{ group: string; high: nu
  */
 export function parseGroup(data: string[]): { count: number; first: number; last: number; group: string } | null {
   if (data.length === 0) return null
-  
-  const parts = data[0].split(' ')
+
+  // A raw GROUP status line is "211 <count> <first> <last> <group>"; callers
+  // sometimes pass the payload without the 3-digit code, so drop it first.
+  let line = data[0]
+  if (/^\d{3} /.test(line)) line = line.slice(4)
+  const parts = line.trim().split(/\s+/)
   if (parts.length >= 4) {
     return {
       count: parseInt(parts[0], 10),
@@ -163,12 +168,104 @@ export function parseDate(data: string[]): { year: number; month: number; day: n
 }
 
 /**
- * Execute NNTP commands on a server
- * - Open TCP (with optional STARTTLS via tls.connect)
- * - Send commands sequentially
- * - Parse multi-line .-terminated responses
- * - Return NNTPResult[]
+ * Execute NNTP commands on a server, sequentially, over one connection.
+ * Returns one NNTPResult per command; never throws — transport failures are
+ * reported as ok:false so callers can still render partial results.
  */
+
+/** Buffered line reader over a socket (NNTP is strictly line oriented). */
+class LineReader {
+  private buffer = ''
+  private queue: string[] = []
+  private waiters: Array<{ resolve: (line: string) => void; reject: (err: Error) => void }> = []
+  private failure: Error | null = null
+
+  constructor(sock: Socket) {
+    sock.setEncoding('latin1')
+    sock.on('data', (chunk: string) => {
+      this.buffer += chunk
+      let idx: number
+      while ((idx = this.buffer.indexOf('\r\n')) !== -1) {
+        const line = this.buffer.slice(0, idx)
+        this.buffer = this.buffer.slice(idx + 2)
+        const waiter = this.waiters.shift()
+        if (waiter) waiter.resolve(line)
+        else this.queue.push(line)
+      }
+    })
+    sock.on('error', (err: Error) => this.fail(err))
+    sock.on('close', () => this.fail(new NNTPError(0, 'connection closed by server')))
+  }
+
+  private fail(err: Error) {
+    if (this.failure) return
+    this.failure = err
+    while (this.waiters.length > 0) {
+      const waiter = this.waiters.shift()!
+      waiter.reject(err)
+    }
+  }
+
+  readLine(deadlineMs: number): Promise<string> {
+    if (this.queue.length > 0) return Promise.resolve(this.queue.shift()!)
+    if (this.failure) return Promise.reject(this.failure)
+
+    return new Promise<string>((resolve, reject) => {
+      const wrappedResolve = (line: string) => {
+        clearTimeout(timer)
+        resolve(line)
+      }
+      const timer = setTimeout(() => {
+        const idx = this.waiters.findIndex(w => w.resolve === wrappedResolve)
+        if (idx >= 0) this.waiters.splice(idx, 1)
+        reject(new NNTPError(0, 'read timed out'))
+      }, deadlineMs)
+
+      this.waiters.push({
+        resolve: wrappedResolve,
+        reject: (e: Error) => { clearTimeout(timer); reject(e) },
+      })
+    })
+  }
+}
+
+/** Read a dot-terminated block, undoing RFC 3977 dot-stuffing. */
+async function readDotBlock(reader: LineReader, deadlineMs: number): Promise<string[]> {
+  const lines: string[] = []
+  for (;;) {
+    const line = await reader.readLine(deadlineMs)
+    if (line === '.') return lines
+    lines.push(line.startsWith('..') ? line.slice(1) : line)
+  }
+}
+
+function wireCommand(cmd: NNTPCommand): string {
+  switch (cmd.cmd) {
+    case 'LIST_ACTIVE': return 'LIST ACTIVE'
+    case 'GROUP': return `GROUP ${cmd.group}`
+    case 'OVER': return `OVER ${cmd.range}`
+    case 'ARTICLE': return `ARTICLE ${cmd.id}`
+    case 'DATE': return 'DATE'
+  }
+}
+
+function isMultiline(cmd: NNTPCommand, code: number): boolean {
+  if (cmd.cmd === 'LIST_ACTIVE' && code === 215) return true
+  if (cmd.cmd === 'OVER' && code === 224) return true
+  if (cmd.cmd === 'ARTICLE' && (code === 220 || code === 221 || code === 222)) return true
+  return false
+}
+
+function parsePayload(cmd: NNTPCommand, lines: string[]): unknown {
+  switch (cmd.cmd) {
+    case 'LIST_ACTIVE': return parseListActive(lines)
+    case 'GROUP': return parseGroup(lines)
+    case 'OVER': return parseOver(lines)
+    case 'ARTICLE': return parseArticle(lines)
+    case 'DATE': return parseDate(lines)
+  }
+}
+
 export async function nntpCommand(
   host: string,
   port: number,
@@ -177,212 +274,65 @@ export async function nntpCommand(
 ): Promise<NNTPResult[]> {
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const useTls = opts?.tls ?? false
-  
-  return new Promise((resolve) => {
-    let timedOut = false
-    const timer = setTimeout(() => {
-      timedOut = true
-      if (conn) {
-        conn.destroy()
+  const results: NNTPResult[] = []
+  let sock: Socket | null = null
+
+  try {
+    sock = await new Promise<Socket>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new NNTPError(0, `connect to ${host}:${port} timed out`)),
+        timeoutMs
+      )
+      let s: Socket
+      const onConnect = () => { clearTimeout(timer); resolve(s) }
+      s = useTls
+        ? tlsConnect({ host, port, rejectUnauthorized: false, servername: host }, onConnect)
+        : createConnection({ host, port }, onConnect)
+      s.once('error', (err: Error) => {
+        clearTimeout(timer)
+        reject(new NNTPError(0, `connect failed: ${err.message}`))
+      })
+    })
+
+    const reader = new LineReader(sock)
+
+    // Greeting: 200 = posting allowed, 201 = no posting. Either means ready.
+    const greeting = await reader.readLine(timeoutMs)
+    const greetingCode = parseInt(greeting.slice(0, 3), 10)
+    if (greetingCode !== 200 && greetingCode !== 201) {
+      throw new NNTPError(greetingCode, `unexpected greeting: ${greeting}`)
+    }
+
+    for (const cmd of commands) {
+      sock.write(`${wireCommand(cmd)}\r\n`)
+      const status = await reader.readLine(timeoutMs)
+      const code = parseInt(status.slice(0, 3), 10)
+
+      if (Number.isNaN(code)) {
+        results.push({ ok: false, cmd: cmd.cmd, error: new NNTPError(0, `malformed status line: ${status}`) })
+        continue
       }
-      const results: NNTPResult[] = commands.map(cmd => ({
-        ok: false as const,
-        cmd: cmd.cmd,
-        error: new NNTPError(400, `NNTP request to ${host}:${port} timed out after ${timeoutMs}ms`)
-      }))
-      resolve(results)
-    }, timeoutMs)
-    
-    let conn: any | null = null
-    let buffer = ''
-    let pendingCommands = [...commands]
-    let currentCommand: NNTPCommand | null = null
-    let responseLines: string[] = []
-    let multiLine = false
-    const results: NNTPResult[] = []
-    
-    function connect() {
-      if (useTls) {
-        const tls = require('tls')
-        conn = tls.connect({ host, port, rejectUnauthorized: false }, () => {
-          // Check if server supports STARTTLS
-          sendCommand('CAPABILITIES')
-        })
+      if (code >= 400) {
+        results.push({ ok: false, cmd: cmd.cmd, error: new NNTPError(code, status.slice(4)) })
+        continue
+      }
+
+      if (isMultiline(cmd, code)) {
+        const lines = await readDotBlock(reader, timeoutMs)
+        results.push({ ok: true, cmd: cmd.cmd, data: parsePayload(cmd, lines) })
       } else {
-        conn = require('net').createConnection({ host, port }, () => {
-          // Server connection established
-          sendCommand('CAPABILITIES')
-        })
-      }
-      
-      conn.on('data', (chunk: Buffer) => {
-        if (timedOut) return
-        
-        buffer += chunk.toString('utf8')
-        processBuffer()
-      })
-      
-      conn.on('end', () => {
-        if (timedOut) return
-        clearTimeout(timer)
-        resolve(results)
-      })
-      
-      conn.on('error', (err: NodeJS.ErrnoException) => {
-        if (timedOut) return
-        clearTimeout(timer)
-        
-        const errorResults: NNTPResult[] = commands.map(cmd => ({
-          ok: false as const,
-          cmd: cmd.cmd,
-          error: new NNTPError(0, `Connection error: ${err.message}`)
-        }))
-        resolve(errorResults)
-      })
-    }
-    
-    function sendCommand(cmd: string) {
-      if (conn && conn.writable) {
-        conn.write(cmd + '\r\n')
+        results.push({ ok: true, cmd: cmd.cmd, data: parsePayload(cmd, [status]) })
       }
     }
-    
-    function processBuffer() {
-      const lines = buffer.split('\r\n')
-      buffer = lines.pop() || ''
-      
-      for (const line of lines) {
-        if (line.length === 0) continue
-        
-        if (!multiLine) {
-          // First line of response
-          const [code, continuation, message] = parseResponseLine(line)
-          
-          if (code === 500) {
-            // Command not recognized
-            currentCommand = pendingCommands.shift() || { cmd: 'DATE' }
-            results.push({
-              ok: false as const,
-              cmd: currentCommand.cmd,
-              error: new NNTPError(code, `Unknown command: ${message}`)
-            })
-            processNextCommand()
-            return
-          }
-          
-          if (!currentCommand) {
-            // Response to CAPABILITIES or greeting
-            if (useTls && !conn!.secure && message.includes('STARTTLS')) {
-              sendCommand('STARTTLS')
-            }
-            continue
-          }
-          
-          if (!continuation) {
-            // Single line response
-            let parsedData: unknown = message
-            
-            switch (currentCommand.cmd) {
-              case 'LIST_ACTIVE':
-                parsedData = parseListActive([message])
-                break
-              case 'GROUP':
-                parsedData = parseGroup([message])
-                break
-              case 'OVER':
-                parsedData = parseOver([message])
-                break
-              case 'ARTICLE':
-                parsedData = parseArticle([message])
-                break
-              case 'DATE':
-                parsedData = parseDate([message])
-                break
-            }
-            
-            const isSuccess = code >= 200 && code < 400
-            const resultEntry: NNTPResult = isSuccess
-              ? { ok: true as const, cmd: currentCommand.cmd, data: parsedData }
-              : { ok: false as const, cmd: currentCommand.cmd, error: new NNTPError(code, `NNTP error: ${message}`) }
-            results.push(resultEntry)
-            processNextCommand()
-            return
-          }
-          
-          // Multi-line response starting
-          multiLine = true
-          responseLines = [message]
-          return
-        }
-        
-        // Inside multi-line response
-        if (line === '.') {
-          // End of multi-line response
-          multiLine = false
-          
-          let parsedData: unknown = responseLines
-          
-          switch (currentCommand?.cmd) {
-            case 'LIST_ACTIVE':
-              parsedData = parseListActive(responseLines)
-              break
-            case 'GROUP':
-              parsedData = parseGroup(responseLines)
-              break
-            case 'OVER':
-              parsedData = parseOver(responseLines)
-              break
-            case 'ARTICLE':
-              parsedData = parseArticle(responseLines)
-              break
-            case 'DATE':
-              parsedData = parseDate(responseLines)
-              break
-          }
-          
-          results.push({
-            ok: true as const,
-            cmd: currentCommand?.cmd as NNTPCommand["cmd"],
-            data: parsedData,
-          })
-          processNextCommand()
-          return
-        }
-        
-        responseLines.push(line)
-      }
+
+    return results
+  } catch (err) {
+    const error = err instanceof NNTPError ? err : new NNTPError(0, (err as Error).message)
+    for (const cmd of commands.slice(results.length)) {
+      results.push({ ok: false, cmd: cmd.cmd, error })
     }
-    
-    function processNextCommand() {
-      if (pendingCommands.length === 0) {
-        return
-      }
-      
-      currentCommand = pendingCommands.shift() || null
-      if (!currentCommand) return
-      
-      let cmdString = ''
-      switch (currentCommand.cmd) {
-        case 'LIST_ACTIVE':
-          cmdString = 'LIST ACTIVE'
-          break
-        case 'GROUP':
-          cmdString = `GROUP ${currentCommand.group}`
-          break
-        case 'OVER':
-          cmdString = `OVER ${currentCommand.range}`
-          break
-        case 'ARTICLE':
-          cmdString = `ARTICLE ${currentCommand.id}`
-          break
-        case 'DATE':
-          cmdString = 'DATE'
-          break
-      }
-      
-      sendCommand(cmdString)
-    }
-    
-    connect()
-  })
+    return results
+  } finally {
+    if (sock) sock.destroy()
+  }
 }

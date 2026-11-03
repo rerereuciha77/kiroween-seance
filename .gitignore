@@ -14,4 +14,4 @@ coverage/
 .vitest/
 *.tsbuildinfo
 next-env.d.ts
-.vercel/
+.vercel/.seance-cache/

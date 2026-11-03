@@ -1,0 +1,28 @@
+If you have having difficulty viewing Gopherspace, your client might be
+broken or not current with current Gopher practise. Many web browsers
+make inadequate gopher clients; see our related document on this topic:
+
+	gopher://gopher.floodgap.com/0/gopher/wbgopher
+
+Signs of a broken implementation include 1) not showing all selectors on
+a menu; 2) not showing informational text at all; or 3) incorrectly
+rendering informational text as links, which invariably fail.
+
+** IF YOUR BROWSER RENDERS GOPHER CORRECTLY, you should have seen a
+   title blurb before the link for this document explaining about
+   gopher.floodgap.com, and it should not have been a link. **
+
+To see a reference implementation in action, or if you are unlucky enough
+to use a browser that does not support Gopher at all (MSIE 6, Opera, Safari,
+etc.), you can visit the Floodgap Public Gopher Proxy here to view gopher
+sites translated into HTML:
+
+	http://gopher.floodgap.com/gopher/
+
+Please note that all access is governed by Floodgap Terms of Service.
+For questions, please notify
+
+	gopher@floodgap.com
+
+
+.

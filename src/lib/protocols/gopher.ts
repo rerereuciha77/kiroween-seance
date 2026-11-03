@@ -1,6 +1,5 @@
 import { createConnection } from 'net'
 import { GopherError } from '../errors'
-import { Protocol } from '@/types'
 
 export interface GopherItem {
   kind: string;   // raw item-type char: "0" "1" "7" "i" …
@@ -19,55 +18,58 @@ const DEFAULT_TIMEOUT_MS = 10000
 const DEFAULT_MAX_BYTES = 512 * 1024 // 512 KB
 
 /**
- * Parse a Gopher menu response into GopherItem[]
- * Handles malformed lines gracefully with kind:"i" fallback
+ * Parse a Gopher menu (RFC 1436 item lines) into GopherItem[].
+ *
+ * A line is `<type><display>\t<selector>\t<host>\t<port>`; because the type
+ * char is glued to the display string, `parts[0].slice(1)` is the label.
+ * Malformed lines degrade to an informational item instead of throwing.
  */
 export function parseGopherMenu(data: string, host: string, port: number): GopherItem[] {
-  const lines = data.split('\r\n')
   const items: GopherItem[] = []
-  
-  for (const line of lines) {
+
+  for (const rawLine of data.split(/\r?\n/)) {
+    const line = rawLine.replace(/\r$/, '')
     if (line.length === 0) continue
-    
-    // Try to parse as tab-delimited
+
     const parts = line.split('\t')
-    
-    if (parts.length >= 3) {
-      const kind = parts[0].charAt(0)
-      const label = parts[1] || ''
-      const selector = parts[2] || ''
-      const hostPart = parts[3] || host
-      const portPart = parts[4] ? parseInt(parts[4], 10) : port
-      
+
+    if (parts.length >= 2) {
+      const head = parts[0] ?? ''
+      const kind = head.charAt(0) || 'i'
+      const label = head.slice(1)
+      const selector = parts[1] ?? ''
+      const itemHost = parts[2]?.trim() || host
+      const parsedPort = parts[3] ? parseInt(parts[3], 10) : port
+
       items.push({
         kind,
-        label,
+        label: label || selector || '(untitled)',
         selector,
-        host: hostPart,
-        port: portPart || port,
+        host: itemHost,
+        port: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : port,
       })
     } else {
-      // Malformed line - treat as info item
-      items.push({
-        kind: 'i',
-        label: line,
-        selector: '',
-        host,
-        port,
-      })
+      items.push({ kind: 'i', label: line, selector: '', host, port })
     }
   }
-  
+
   return items
 }
 
+/** A gopher menu line starts with a type char followed by a label and a tab. */
+function looksLikeMenu(data: string): boolean {
+  const firstLine = data.split(/\r?\n/).find(l => l.trim().length > 0)
+  if (!firstLine) return false
+  if (!firstLine.includes('\t')) return false
+  const type = firstLine.charAt(0)
+  return /[0-9+\-gIThis;]/.test(type)
+}
+
 /**
- * Fetch data from a Gopher server
- * - TCP connect via net.createConnection
- * - Send <selector>\r\n
- * - Read up to maxBytes (default 512 KB)
- * - Detect item-type-1 menus vs plain text
- * - Return GopherResult
+ * Fetch one Gopher selector.
+ * - TCP connect, send `<selector>\r\n`, read until the server closes
+ * - Cap the body at `maxBytes` (default 512 KB) with a `toobig` error
+ * - Menus are parsed into items, everything else is returned as text
  */
 export async function gopherFetch(
   host: string,
@@ -77,94 +79,56 @@ export async function gopherFetch(
 ): Promise<GopherResult> {
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const maxBytes = opts?.maxBytes ?? DEFAULT_MAX_BYTES
-  
-  return new Promise((resolve) => {
-    let timedOut = false
-    const timer = setTimeout(() => {
-      timedOut = true
-      if (conn) {
-        conn.destroy()
-      }
-      resolve({
-        ok: false,
-        error: new GopherError('timeout', `Gopher request to ${host}:${port} timed out after ${timeoutMs}ms`)
-      })
-    }, timeoutMs)
-    
-    let conn: any | null = null
-    let buffer = Buffer.alloc(0)
-    
-    conn = createConnection({ host, port }, () => {
-      // Send selector with \r\n
-      conn?.write(selector + '\r\n')
+
+  return new Promise<GopherResult>((resolve) => {
+    let settled = false
+    let timer: NodeJS.Timeout | null = null
+    const chunks: Buffer[] = []
+    let received = 0
+
+    const settle = (result: GopherResult) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      conn.destroy()
+      resolve(result)
+    }
+
+    const conn = createConnection({ host, port }, () => {
+      conn.write(`${selector}\r\n`)
     })
-    
+
+    timer = setTimeout(
+      () => settle({ ok: false, error: new GopherError('timeout', `Gopher request to ${host}:${port} timed out after ${timeoutMs}ms`) }),
+      timeoutMs
+    )
+
     conn.on('data', (chunk: Buffer) => {
-      if (timedOut) return
-      
-      const newLength = buffer.length + chunk.length
-      if (newLength > maxBytes) {
-        clearTimeout(timer)
-        conn?.destroy()
-        resolve({
-          ok: false,
-          error: new GopherError('toobig', `Response exceeds maximum size of ${maxBytes} bytes`)
-        })
+      received += chunk.length
+      if (received > maxBytes) {
+        settle({ ok: false, error: new GopherError('toobig', `Response exceeds maximum size of ${maxBytes} bytes`) })
         return
       }
-      
-      buffer = Buffer.concat([buffer, chunk])
-      
-      // Check if we have a complete response (ends with \r\n)
-      if (buffer.length >= 2) {
-        const lastTwo = buffer.slice(-2)
-        if (lastTwo[0] === 0x0d && lastTwo[1] === 0x0a) {
-          // Complete response received
-          clearTimeout(timer)
-          conn?.end()
-        }
-      }
+      chunks.push(chunk)
     })
-    
-    conn.on('end', () => {
-      if (timedOut) return
-      clearTimeout(timer)
-      
-      const data = buffer.toString('utf8')
-      
-      // Detect if this is a menu (type 1) or plain text
-      // Menu starts with first item type, text files don't have item type prefix
-      const firstNonEmptyLine = data.split('\r\n').find(line => line.length > 0)
-      
-      if (firstNonEmptyLine && firstNonEmptyLine.length > 0) {
-        const firstChar = firstNonEmptyLine.charAt(0)
-        if (['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'g', 'I', 'T'].includes(firstChar)) {
-          // This looks like a Gopher menu
-          const items = parseGopherMenu(data, host, port)
-          resolve({ ok: true, type: 'menu', items })
-        } else {
-          // Plain text file
-          resolve({ ok: true, type: 'text', body: data })
-        }
+
+    const finish = () => {
+      const data = Buffer.concat(chunks).toString('utf8')
+      if (looksLikeMenu(data)) {
+        settle({ ok: true, type: 'menu', items: parseGopherMenu(data, host, port) })
       } else {
-        resolve({ ok: true, type: 'text', body: data })
+        settle({ ok: true, type: 'text', body: data })
       }
-    })
-    
+    }
+
+    conn.on('end', finish)
+    conn.on('close', finish)
+
     conn.on('error', (err: NodeJS.ErrnoException) => {
-      if (timedOut) return
-      clearTimeout(timer)
-      
       if (err.code === 'ECONNREFUSED') {
-        resolve({
-          ok: false,
-          error: new GopherError('refused', `Connection refused to ${host}:${port}`)
-        })
+        settle({ ok: false, error: new GopherError('refused', `Connection refused to ${host}:${port}`) })
       } else {
-        resolve({
-          ok: false,
-          error: new GopherError('parse', `Connection error: ${err.message}`)
-        })
+        settle({ ok: false, error: new GopherError('parse', `Connection error: ${err.message}`) })
       }
     })
   })

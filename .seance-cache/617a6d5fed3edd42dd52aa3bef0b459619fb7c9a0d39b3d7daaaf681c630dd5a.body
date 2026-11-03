@@ -1,0 +1,58 @@
+Path: news.neodome.net!weretis.net!feeder8.news.weretis.net!eternal-september.org!feeder.eternal-september.org!nntp.eternal-september.org!.POSTED!not-for-mail
+From: anton@mips.complang.tuwien.ac.at (Anton Ertl)
+Newsgroups: comp.lang.forth
+Subject: Re: Docker and Gforth (wasd: [ANN] Gforth 1.0.1 released)
+Date: Mon, 02 Nov 2026 18:42:07 GMT
+Organization: Institut fuer Computersprachen, Technische Universitaet Wien
+Lines: 41
+Message-ID: <2026Nov2.194207@mips.complang.tuwien.ac.at>
+References: <2026Nov1.110124@mips.complang.tuwien.ac.at> <2026Nov2.093323@mips.complang.tuwien.ac.at>
+Injection-Date: Mon, 02 Nov 2026 18:51:15 +0000 (UTC)
+Injection-Info: dont-email.me;
+	logging-data="3246213"; mail-complaints-to="abuse@eternal-september.org";	posting-account="U2FsdGVkX19RkyiktGGBCv/T1gVdKjYK"; posting-host="e1a3a7e2decf1e89e183bf3e02cd337a"
+Cancel-Lock: sha1:XegJ8GLIdfiadUgZzwda+UkpUe0= sha256:ykqf+febYZ65Q8zEQA+pyTAgz8B5N+pkBNRThx+tY0k=
+	sha1:bp1txJHbMPi/fwz5Pt9Zu3QJglk= sha256:H2g5wm2l7Ndd/pJAi+ksZJsjtt2STeQbQi7tshUjrpk=
+X-newsreader: xrn 10.11
+Xref: news.neodome.net comp.lang.forth:412
+
+anton@mips.complang.tuwien.ac.at (Anton Ertl) writes:
+>Bernd Paysan has now built docker images with tags 1.0.0 and 1.0.1, so
+>you can start, e.g., gforth-fast 1.0.1 with
+>
+>docker run -it --rm forthy42/gforth:1.0.1 gforth-fast
+>
+>One other aspect of Docker is: by default it does not allow the gforth
+>engine running in the container to access files outside the container.
+>
+>I played around a little with the options --volume (-v), --mount, and
+>--user (-u), but could not get the gforth in the container to write
+>outside the container.
+
+I have now written a shell script that calls docker with a gforth
+engine and give it R/W access to your working directory and its
+subdirectories on the same file system.
+
+Download it from
+
+https://www.complang.tuwien.ac.at/forth/gforth/docker.sh
+
+Usage example:
+
+./docker.sh gforth-fast onebench.fs
+
+This includes the file onebench.fs that's inside the container unless
+you happen to have a file onebench.fs in your working directory (the
+one inside the container leaves Gforth when finished, so the container
+also ends afterwards.  But if you have myfile.4th in your working
+directory, you can say, e.g.,
+
+./docker.sh gforth myfile.4th
+
+to include it.
+
+- anton
+-- 
+M. Anton Ertl  http://www.complang.tuwien.ac.at/anton/home.html
+comp.lang.forth FAQs: http://www.complang.tuwien.ac.at/forth/faq/toc.html
+     New standard: https://forth-standard.org/
+EuroForth 2026 CFP: http://www.euroforth.org/ef26/cfp.html

@@ -10,13 +10,13 @@ describe('loadRegistry', () => {
   
   it('should load valid sources.json', () => {
     const sources = loadRegistry(path.join(__dirname, '..', 'sources.json'))
-    expect(sources).toHaveLength(3)
+    expect(sources).toHaveLength(5)
     expect(sources[0]).toEqual({
       id: 'gopher-floodgap',
       protocol: 'gopher',
       host: 'gopher.floodgap.com',
       port: 70,
-      description: 'Gopher server at floodgap.com',
+      description: "Floodgap's Gopherspace — the largest surviving Gopher server, home of Veronica-2 search",
     })
   })
   
@@ -56,8 +56,8 @@ describe('isAllowed', () => {
   
   it('should return true for allowed hosts', () => {
     expect(isAllowed('gopher.floodgap.com', 70)).toBe(true)
-    expect(isAllowed('news.europenews.net', 119)).toBe(true)
-    expect(isAllowed('localhost', 79)).toBe(true)
+    expect(isAllowed('news.neodome.net', 119)).toBe(true)
+    expect(isAllowed('graph.no', 79)).toBe(true)
   })
   
   it('should return false for unknown hosts', () => {

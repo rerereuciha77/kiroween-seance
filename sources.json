@@ -4,20 +4,34 @@
     "protocol": "gopher",
     "host": "gopher.floodgap.com",
     "port": 70,
-    "description": "Gopher server at floodgap.com"
+    "description": "Floodgap's Gopherspace — the largest surviving Gopher server, home of Veronica-2 search"
   },
   {
-    "id": "nntp-europenews",
+    "id": "gopher-quux",
+    "protocol": "gopher",
+    "host": "quux.org",
+    "port": 70,
+    "description": "quux.org — long-running Gopher host with mirrors of classic text archives"
+  },
+  {
+    "id": "nntp-neodome",
     "protocol": "nntp",
-    "host": "news.europenews.net",
+    "host": "news.neodome.net",
     "port": 119,
-    "description": "European news NNTP server"
+    "description": "NeoDome Usenet — open, read-only NNTP server carrying the alt.* and comp.* hierarchies"
   },
   {
-    "id": "finger-local",
+    "id": "nntp-mixmin",
+    "protocol": "nntp",
+    "host": "news.mixmin.net",
+    "port": 119,
+    "description": "Mixmin Usenet — open NNTP server with a broad group list"
+  },
+  {
+    "id": "finger-graph",
     "protocol": "finger",
-    "host": "localhost",
+    "host": "graph.no",
     "port": 79,
-    "description": "Local finger server for testing"
+    "description": "graph.no finger — weather, clock and ASCII graphs served over RFC 1288"
   }
 ]

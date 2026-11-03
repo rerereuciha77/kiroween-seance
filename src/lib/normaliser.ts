@@ -33,13 +33,14 @@ export function normaliseGopher(
       const mime = mimeMap[kind] || 'text/plain'
       
       // Determine kind category for UI
+      // RFC 1436: type 1 is a menu, type 7 is a search endpoint (also
+      // navigable), type 0 and the binary/image types are documents,
+      // type 'i' carries informational text only.
       let categoryKind = 'info'
-      if (kind === '0' || kind === '1' || kind === '7') {
+      if (kind === '1' || kind === '7') {
         categoryKind = 'menu'
-      } else if (kind === '2' || kind === '3' || kind === '4' || kind === '5' || kind === '6' || kind === '8' || kind === '9' || kind === 'g' || kind === 'I' || kind === 'T') {
+      } else if (kind === '0' || kind === '2' || kind === '3' || kind === '4' || kind === '5' || kind === '6' || kind === '8' || kind === '9' || kind === 'g' || kind === 'I' || kind === 'T' || kind === 'h') {
         categoryKind = 'text'
-      } else if (kind === 'i') {
-        categoryKind = 'info'
       }
       
       return {

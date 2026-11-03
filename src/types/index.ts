@@ -8,6 +8,8 @@ export interface NormalisedRecord {
   port: number;
   mime: string;        // "text/plain" | "text/html" | "message/rfc822" | etc.
   bytes: number;       // 0 if unknown
+  author?: string;     // Usenet From header, when the protocol exposes one
+  date?: string;       // Usenet Date header, raw RFC 5322 form
 }
 
 export interface Source {
